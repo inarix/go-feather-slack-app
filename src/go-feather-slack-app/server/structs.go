@@ -2,7 +2,7 @@
  * File              : structs.go
  * Author            : Alexandre Saison <alexandre.saison@inarix.com>
  * Date              : 21.12.2020
- * Last Modified Date: 04.02.2021
+ * Last Modified Date: 12.03.2021
  * Last Modified By  : Alexandre Saison <alexandre.saison@inarix.com>
  */
 
@@ -30,6 +30,13 @@ type Server struct {
 	manager     PodManager.PodManager
 	config      ServerConfig
 	slackClient slack.Client
+	jobWatcher  chan FetchLogsRequest
+}
+
+type FetchLogsRequest struct {
+	podNamespace string
+	podName      string
+	slackTs      string
 }
 
 type JobCreationPayload struct {
