@@ -2,13 +2,14 @@
  * File              : main.go
  * Author            : Alexandre Saison <alexandre.saison@inarix.com>
  * Date              : 09.12.2020
- * Last Modified Date: 18.02.2021
+ * Last Modified Date: 13.03.2021
  * Last Modified By  : Alexandre Saison <alexandre.saison@inarix.com>
  */
 package server
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -70,8 +71,18 @@ func (self *Server) SubmitJobCreation(commandName string, slackTextArguments []s
 
 	self.sendSlackMessageWithClient("Job has been created, I'll send logs when finished", threadTs)
 	self.sendSlackMessageWithClient("Image :"+FormValues.DockerImage, threadTs)
-	self.FetchJobPodLogs(FormValues.Namespace, pod.Name, threadTs)
+	sendRequestToChannel(FormValues.Namespace, pod.Name, threadTs, self.jobWatcher)
 	SendSlackMessage("Job has been created", w)
+}
+
+func sendRequestToChannel(podNamespace string, podName string, threadTS string, channel chan FetchLogsRequest) {
+	request := &FetchLogsRequest{
+		podNamespace: podNamespace,
+		podName:      podName,
+		slackTs:      threadTS,
+	}
+	fmt.Printf("Sending to channel = %+v", request)
+	channel <- *request
 }
 
 func (self *Server) FetchJobPodLogs(podNamespace string, podName string, threadTs string) {
@@ -164,7 +175,24 @@ func (self *Server) handleSlackCommand() http.HandlerFunc {
 func New(listenPort int, podManager PodManager.PodManager) *Server {
 	appConfig := initConfig()
 	slackClient := slack.New(appConfig.SLACK_API_TOKEN)
-	return &Server{port: listenPort, manager: podManager, config: *appConfig, slackClient: *slackClient}
+	jobWatcher := make(chan FetchLogsRequest)
+	return &Server{port: listenPort, manager: podManager, config: *appConfig, slackClient: *slackClient, jobWatcher: jobWatcher}
+}
+
+func (self *Server) jobWatcherHanlder() {
+	channel := self.jobWatcher
+	go func() {
+		log.Printf("Waiting for message from channel")
+		for {
+			fetchPodLogsRequest, ok := <-channel
+			log.Printf("Received:%+v", fetchPodLogsRequest)
+			self.FetchJobPodLogs(fetchPodLogsRequest.podNamespace, fetchPodLogsRequest.podName, fetchPodLogsRequest.slackTs)
+			if !ok {
+				log.Printf("jobWatcherHanlder finished !")
+				return
+			}
+		}
+	}()
 }
 
 func Listen(manager PodManager.PodManager) {
@@ -180,6 +208,7 @@ func Listen(manager PodManager.PodManager) {
 	}
 	server := New(appPort, manager)
 	server.recordMetrics()
+	server.jobWatcherHanlder()
 
 	http.HandleFunc("/", server.handleSlackCommand())
 	http.HandleFunc("/events", server.handleSlackEvent())
